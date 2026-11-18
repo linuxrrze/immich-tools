@@ -4,4 +4,4 @@ apikey = YOUR_IMMICH_API_KEY
 
 [ollama]
 host = http://10.10.0.10:11434
-prompt = Beschreibe das Bild in deutscher Sprache. Verwende keine einleitenden Worte.
+prompt = Describe the image in English. Do not use any introductory words.

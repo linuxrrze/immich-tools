@@ -9,11 +9,16 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# Debian security updates that are newer than the base image
+RUN apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
-# Latest pip on purpose: picks up pip security fixes on every (weekly) build
-# hadolint ignore=DL3013
-RUN pip install --upgrade pip \
- && pip install -r requirements.txt
+# pip is only needed at build time. Removing it also removes the packages it
+# bundles (urllib3, msgpack, setuptools), which are often behind on fixes.
+RUN pip install -r requirements.txt \
+ && pip uninstall -y pip
 
 COPY --chmod=755 *.py ./
 

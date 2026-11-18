@@ -148,10 +148,10 @@ for album in albums:
                     continue
 
                 prompt = f"""{default_prompt}.
-                             Der Dateiname des Bildes lautet {album['albumName']}/{asset['originalFileName']} und gibt evtl. weitere Hinweise zum Bild.
+                             The file name of the image is {album['albumName']}/{asset['originalFileName']} and may give further hints about the image.
                 """
                 if exif_desc != '':
-                    prompt += f"Weitere Informationen zum Bild:\n{exif_desc}"
+                    prompt += f"Additional information about the image:\n{exif_desc}"
                 desc = generate_response([encoded_image], model, prompt)
 
             try:

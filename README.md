@@ -21,13 +21,13 @@ apikey = YOUR_IMMICH_API_KEY
 
 [ollama]
 host = http://ollama.example.com:11434
-prompt = Beschreibe das Bild in deutscher Sprache. Verwende keine einleitenden Worte.
+prompt = Describe the image in English. Do not use any introductory words.
 ```
 
 - **API key:** create one in Immich under *Account Settings → API Keys*.
   `add_image_description.py` needs permission to read albums, search and
   download assets, and update assets.
-- **Prompt:** the default prompt asks for a German description. Change it to
+- **Prompt:** the sample prompt asks for an English description. Change it to
   get descriptions in another language or style.
 - **Model:** `gemma3:27b` (set in `add_image_description.py`). Pull it first
   with `ollama pull gemma3:27b`.
