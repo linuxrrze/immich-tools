@@ -9,3 +9,12 @@ base_url = http://10.10.0.10:11434/v1
 api_key = ollama
 model = gemma3:27b
 prompt = Describe the image in English. Do not use any introductory words.
+
+[nextcloud]
+# Only needed for migrate_nextcloud.py
+url = https://nextcloud.example.com
+user = YOUR_NEXTCLOUD_USER
+# App password: Nextcloud → Personal settings → Security → Create new app password
+password = YOUR_NEXTCLOUD_APP_PASSWORD
+# Folder to migrate, relative to your Nextcloud root (default: everything)
+folder = Photos

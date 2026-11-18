@@ -5,6 +5,7 @@ Small Python tools for an [Immich](https://immich.app/) photo server:
 | Script | What it does |
 |---|---|
 | `add_image_description.py` | Generates a description for every image in your albums with a vision model behind any OpenAI-compatible API (e.g. a local [Ollama](https://ollama.com/)) and stores it as the Immich asset description. |
+| `migrate_nextcloud.py` | Migrates photos and videos from Nextcloud to Immich, including the comments stored in Nextcloud (they become the Immich description) and the folder structure (as albums and tags). |
 | `sync_images.py` | Checks which images in a local folder are already in Immich (accepted = new, rejected = duplicate). It does not upload anything yet. |
 | `list_albums.py` | Lists all albums with their IDs. |
 
@@ -24,11 +25,24 @@ base_url = http://ollama.example.com:11434/v1
 api_key = ollama
 model = gemma3:27b
 prompt = Describe the image in English. Do not use any introductory words.
+
+[nextcloud]
+url = https://nextcloud.example.com
+user = YOUR_NEXTCLOUD_USER
+password = YOUR_NEXTCLOUD_APP_PASSWORD
+folder = Photos
 ```
+
+Each tool only needs the sections it uses: `[llm]` is for
+`add_image_description.py`, `[nextcloud]` for `migrate_nextcloud.py`.
 
 - **Immich API key:** create one in Immich under *Account Settings → API Keys*.
   `add_image_description.py` needs permission to read albums, search and
-  download assets, and update assets.
+  download assets, and update assets. `migrate_nextcloud.py` needs to upload,
+  read and update assets, and to create and edit albums and tags.
+- **Nextcloud (`[nextcloud]`):** use an app password (*Personal settings →
+  Security → Create new app password*), not your login password. `folder` is
+  relative to your Nextcloud root; leave it empty to migrate everything.
 - **LLM server (`[llm]`):** any server with an OpenAI-compatible chat API and
   a vision model works:
 
@@ -70,6 +84,9 @@ docker run --rm -v "$PWD/immich-tools:/data" ghcr.io/linuxrrze/immich-tools
 docker run --rm -v "$PWD/immich-tools:/data" ghcr.io/linuxrrze/immich-tools \
   add_image_description.py "My Album"
 
+# Migrate the Nextcloud folder from config.ini (or pass another folder)
+docker run --rm -v "$PWD/immich-tools:/data" ghcr.io/linuxrrze/immich-tools migrate_nextcloud.py
+
 # List albums
 docker run --rm -v "$PWD/immich-tools:/data" ghcr.io/linuxrrze/immich-tools list_albums.py
 
@@ -92,11 +109,54 @@ pip install -r requirements.txt
 
 ./add_image_description.py              # all albums
 ./add_image_description.py "My Album"   # one album
+./migrate_nextcloud.py                  # folder from config.ini
+./migrate_nextcloud.py "Photos/2019"    # another Nextcloud folder
 ./list_albums.py
 ./sync_images.py ~/Pictures
 ```
 
 Run the scripts from the folder that contains `config.ini`.
+
+## How the Nextcloud migration works
+
+Nextcloud stores comments in its database, not in the image files, so a plain
+file copy loses them. For every image and video below the configured folder,
+`migrate_nextcloud.py`:
+
+1. downloads the file via WebDAV and computes its SHA1 checksum,
+2. uploads it to Immich, unless Immich already has a file with that checksum
+   (then the existing asset is used),
+3. reads the file's Nextcloud comments and writes them into the Immich
+   description, one line per comment, oldest first:
+
+   ```
+   2016-01-16: First comment
+   2016-01-18: Grandma in Rome
+   ```
+
+   The comments are placed in front of any text the description already has
+   (e.g. an AI description). Emoji reactions are not migrated.
+
+Immich has no folders for uploaded files, so the Nextcloud folder structure is
+recreated in two ways:
+
+- **Albums:** one album per folder, named after the full folder path, e.g.
+  `Photos/2019/Rome`. Immich albums can't be nested, so the full path keeps
+  folders with the same name apart. An existing album with exactly that name
+  is reused.
+- **Tags:** nested tags below `Nextcloud`, e.g. `Nextcloud` → `Photos` →
+  `2019` → `Rome`. They show the complete tree and can be used as filters.
+
+Progress is stored in `cache/nextcloud-migration.json`. When the tool runs
+again, unchanged files are not downloaded again, but their comments are
+checked; text that is already in the description is not added twice. If a
+comment is edited in Nextcloud after the migration, the edited version is
+added and the old one stays.
+
+**Size limits:** Nextcloud limits a single comment to 1000 characters, but a
+file can have any number of comments. Immich stores descriptions without a
+length limit; only its 10 MB limit for API requests applies, which the tool
+checks before writing.
 
 ## How the description tool works
 
@@ -105,13 +165,13 @@ For each image in an album, `add_image_description.py`:
 1. downloads the original file and checks it against the checksum Immich has
    stored (files from external libraries are checked by path),
 2. sends it to the model together with the prompt, the album and file
-   name, and any description the image already has,
-3. writes the result to Immich and to `cache/<sha1>-<model>.description`.
+   name, and any description the image already has (e.g. migrated comments),
+3. appends the result to the Immich description and stores it in
+   `cache/<sha1>-<model>.description`.
 
-Images that already have a cached description are not sent to the model again.
-If the description in Immich differs from the cached one, the cached
-description is written back, which overwrites descriptions edited by hand in
-Immich.
+Existing text in the description is never replaced. Images that already have
+a cached description are not sent to the model again; the cached text is only
+added if it is missing from the description.
 
 ## Container image and CI
 

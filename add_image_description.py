@@ -12,7 +12,7 @@ from pillow_heif import register_heif_opener
 from hashlib import sha1
 from openai import OpenAI
 
-from immich_client import config, add_description, list_albums, list_images, download_image, is_library_asset
+from immich_client import config, add_description, merge_description, list_albums, list_images, download_image, is_library_asset
 
 register_heif_opener()
 
@@ -91,30 +91,24 @@ for album in albums:
             print(f"{'-'*len(info)}\n{info}\n{'-'*len(info)}")
             immich_sha1_csum = binascii.hexlify(base64.b64decode(asset['checksum'])).decode('utf-8')
 
-            desc = ''
+            ai_desc = ''
             # Existing EXIF description (may be missing or None); passed to the model as extra context
             exif_desc = ((asset.get('exifInfo') or {}).get('description') or '').strip()
             desc_filename = f"cache/{immich_sha1_csum}-{cache_model_name}.description"
 
-            # Description created and cached
+            # The cache holds only the AI-generated text. It is appended to an
+            # existing description (e.g. comments migrated from Nextcloud)
+            # instead of replacing it.
             if os.path.isfile(desc_filename):
                 with open(desc_filename, 'r') as f:
-                    desc = f.read()
+                    ai_desc = f.read().strip()
                 print(f"INFO: Image {asset['originalFileName']} already processed")
-                # The description set via PUT /assets/{id} is returned as exifInfo.description
-                if exif_desc != '':
-                    print(f"INFO: EXIF description available", end='')
-                    # Make sure to remove trailing newlines etc.
-                    if desc.strip() == exif_desc:
-                        print(' and matching cached data.')
-                        continue
-                    else:
-                        print(' and not matching cached data.')
-                else:
-                    print("No description yet")
-                    print(desc)
+                if ai_desc and ai_desc in exif_desc:
+                    print("INFO: AI description already in Immich")
+                    continue
+                print("INFO: AI description missing in Immich, adding cached one")
 
-            # Description needs to be created 
+            # Description needs to be created
             else:
                 image_bytes = download_image(asset['id'])
                 try:
@@ -151,17 +145,16 @@ for album in albums:
                 """
                 if exif_desc != '':
                     prompt += f"Additional information about the image:\n{exif_desc}"
-                desc = generate_response([encoded_image], model, prompt)
+                ai_desc = generate_response([encoded_image], model, prompt).strip()
 
             try:
-                if desc and desc != '':
-                    ret = add_description(asset['id'], desc)
-                    #print(ret)
-
+                if ai_desc:
+                    add_description(asset['id'], merge_description(exif_desc, ai_desc))
                     with open(desc_filename, "wb") as f:
-                        f.write(desc.encode('utf-8'))
+                        f.write(ai_desc.encode('utf-8'))
             except Exception as e:
                 print("ERROR: Unable to write description")
+                print(e)
                 continue
 
             processed_images += 1
