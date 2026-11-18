@@ -421,3 +421,57 @@ def test_interrupt_before_first_folder_done(srv, mig, tmp_path):
     run(mig)
     check_complete(srv)
 
+
+
+# --- --report-deleted ------------------------------------------------------
+
+def test_report_deleted(srv, mig):
+    run(mig)
+    c_id = srv.asset_by_checksum(C)
+    # c.mp4 deleted, b.heic moved within the folder (same file ID),
+    # a-copy.jpg deleted while a.jpg (same photo) is still there
+    del srv.files['/Fotos Alt/sub/c.mp4']
+    srv.files['/Fotos Alt/moved/b.heic'] = srv.files.pop('/Fotos Alt/sub/b.heic')
+    del srv.files['/Fotos Alt/Kopie/a-copy.jpg']
+    before = len(srv.requests)
+    assets_before = {i: dict(a) for i, a in srv.assets.items()}
+
+    out = run(mig, '--report-deleted').stdout
+    assert 'DELETED   /Fotos Alt/sub/c.mp4' in out
+    assert f'in Immich: {srv.base_url}/photos/{c_id}' in out
+    assert 'KEPT      /Fotos Alt/Kopie/a-copy.jpg' in out
+    assert 'same photo still in Nextcloud: /Fotos Alt/a.jpg' in out
+    assert 'b.heic' not in out
+    assert '5 migrated file(s) checked, 3 still in Nextcloud, 1 deleted, 1 deleted but' in out
+    # Read-only: nothing changed, nothing downloaded
+    assert not [r for r in srv.requests[before:] if r[0] not in ('GET', 'PROPFIND', 'REPORT')]
+    assert not [p for m, p in srv.requests[before:] if m == 'GET' and p.startswith(srv.nc_root)]
+    assert srv.assets == assets_before
+
+
+def test_report_deleted_immich_status(srv, mig):
+    run(mig)
+    c_id, many_id = srv.asset_by_checksum(C), srv.asset_by_checksum(MANY)
+    srv.assets[c_id]['trashed'] = True
+    del srv.assets[many_id]
+    del srv.files['/Fotos Alt/sub/c.mp4']
+    del srv.files['/Fotos Alt/many.png']
+    out = run(mig, '--report-deleted').stdout
+    assert f'in the Immich trash: {srv.base_url}/photos/{c_id}' in out
+    assert f'already deleted in Immich: {srv.base_url}/photos/{many_id}' in out
+
+
+def test_report_deleted_subfolder_and_outside_copies(srv, mig):
+    run(mig)
+    # Only 'Fotos Alt/Kopie' is checked; a.jpg (same photo) is outside it
+    del srv.files['/Fotos Alt/Kopie/a-copy.jpg']
+    out = run(mig, '--report-deleted', 'Fotos Alt/Kopie').stdout
+    assert 'DELETED   /Fotos Alt/Kopie/a-copy.jpg' in out
+    assert "copy outside 'Fotos Alt/Kopie', not checked: /Fotos Alt/a.jpg" in out
+    assert '1 migrated file(s) checked' in out
+    assert '4 migrated file(s) outside' in out
+
+
+def test_report_deleted_without_state(srv, mig):
+    result = run(mig, '--report-deleted', expect=1)
+    assert 'run a migration first' in result.stderr

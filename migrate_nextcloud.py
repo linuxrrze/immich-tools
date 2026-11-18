@@ -23,9 +23,14 @@ permanently in Immich, it is uploaded again; if it is in the Immich trash, it
 is restored (restore_trashed = no skips it instead). A lock file prevents two runs
 at the same time.
 
-Usage: migrate_nextcloud.py [folder]   (default: [nextcloud] folder / NEXTCLOUD_FOLDER)
+Usage: migrate_nextcloud.py [--report-deleted] [folder]
+       (default folder: [nextcloud] folder / NEXTCLOUD_FOLDER)
+
+--report-deleted only lists migrated files that are no longer in Nextcloud,
+with their Immich assets; it changes nothing.
 """
 
+import argparse
 import json
 import os
 import signal
@@ -244,6 +249,70 @@ def remove_old_tags():
         print(f"TAG       {tag['value']} removed (replaced by tags without '{base_folder()}/')")
 
 
+def immich_web_url(asset_id):
+    """Link to the asset in the Immich web UI (API URL without /api)."""
+    base = immich.immich_apiurl.rstrip('/')
+    if base.endswith('/api'):
+        base = base[:-len('/api')]
+    return f'{base}/photos/{asset_id}'
+
+
+def report_deleted(folder):
+    """List migrated files that are no longer in the Nextcloud folder, with
+    their Immich assets. Read-only: nothing is changed anywhere.
+
+    Nextcloud keeps a file's ID when it is moved, so files moved within the
+    folder are not reported. A photo that exists in several Nextcloud folders
+    is one Immich asset; it is only reported as deleted if no copy is left.
+    """
+    state = load_state()
+    if not state:
+        print(f"No migration progress found ({STATE_FILE}); run a migration first.", file=sys.stderr)
+        return 1
+    folder = folder.strip('/')
+
+    def inside(path):
+        path = path.strip('/')
+        return not folder or path == folder or path.startswith(folder + '/')
+
+    present = {item['fileid']: item['path'] for item in nextcloud.list_media(folder)}
+    checked = {fid: entry for fid, entry in state.items() if inside(entry['path'])}
+    missing = {fid: entry for fid, entry in checked.items() if fid not in present}
+
+    # Other Nextcloud copies of the same Immich asset
+    copies = {}
+    for fid, entry in state.items():
+        if fid in present:
+            copies.setdefault(entry['asset_id'], []).append(('present', present[fid]))
+        elif not inside(entry['path']):
+            copies.setdefault(entry['asset_id'], []).append(('unchecked', entry['path']))
+
+    where = f"'{folder}'" if folder else 'your Nextcloud'
+    print(f"Migrated files that are no longer in {where} (deleted, or moved out of it).")
+    print("This is only a report: nothing is changed in Nextcloud or Immich.\n")
+    status_text = {'active': 'in Immich', 'trashed': 'in the Immich trash', None: 'already deleted in Immich'}
+    deleted = kept = 0
+    for fid, entry in sorted(missing.items(), key=lambda kv: kv[1]['path']):
+        asset_id = entry['asset_id']
+        other = copies.get(asset_id, [])
+        present_copies = [path for kind, path in other if kind == 'present']
+        if present_copies:
+            kept += 1
+            print(f"KEPT      {entry['path']}\n          same photo still in Nextcloud: {present_copies[0]}")
+            continue
+        deleted += 1
+        status = immich.asset_status(asset_id)
+        print(f"DELETED   {entry['path']}\n          {status_text[status]}: {immich_web_url(asset_id)}")
+        for kind, path in other:
+            print(f"          copy outside {where}, not checked: {path}")
+
+    print(f"\nSummary: {len(checked)} migrated file(s) checked, {len(checked) - len(missing)} still in "
+          f"Nextcloud, {deleted} deleted, {kept} deleted but the same photo is still in Nextcloud")
+    if len(state) > len(checked):
+        print(f"{len(state) - len(checked)} migrated file(s) outside {where} were not checked.")
+    return 0
+
+
 def _terminate(signum, frame):
     raise KeyboardInterrupt
 
@@ -252,7 +321,16 @@ def main():
     # Treat SIGTERM (docker stop, docker compose down) like Ctrl+C. Without a
     # handler, Python running as PID 1 in a container would ignore it.
     signal.signal(signal.SIGTERM, _terminate)
-    folder = sys.argv[1] if len(sys.argv) > 1 else immich.setting('nextcloud', 'folder', '')
+    parser = argparse.ArgumentParser(
+        description='Migrate photos and videos from Nextcloud to Immich, including comments.')
+    parser.add_argument('folder', nargs='?',
+                        help='Nextcloud folder (default: [nextcloud] folder / NEXTCLOUD_FOLDER)')
+    parser.add_argument('--report-deleted', action='store_true',
+                        help='only list migrated files that are no longer in Nextcloud; changes nothing')
+    args = parser.parse_args()
+    folder = args.folder if args.folder is not None else immich.setting('nextcloud', 'folder', '')
+    if args.report_deleted:
+        return report_deleted(folder)
     os.makedirs('cache', exist_ok=True)
     lock = acquire_lock()
     if lock is None:

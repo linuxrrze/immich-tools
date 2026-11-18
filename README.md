@@ -129,6 +129,10 @@ docker run --rm --env-file .env -v "$PWD/immich-tools:/data" ghcr.io/linuxrrze/i
 docker run --rm --env-file .env -v "$PWD/immich-tools:/data" ghcr.io/linuxrrze/immich-tools \
   migrate_nextcloud.py
 
+# List migrated files that were deleted in Nextcloud (changes nothing)
+docker run --rm --env-file .env -v "$PWD/immich-tools:/data" ghcr.io/linuxrrze/immich-tools \
+  migrate_nextcloud.py --report-deleted
+
 # List albums
 docker run --rm --env-file .env -v "$PWD/immich-tools:/data" ghcr.io/linuxrrze/immich-tools \
   list_albums.py
@@ -172,6 +176,7 @@ pip install -r requirements.txt
 ./add_image_description.py "My Album"   # one album
 ./migrate_nextcloud.py                  # folder from config.ini
 ./migrate_nextcloud.py "Photos/2019"    # another Nextcloud folder
+./migrate_nextcloud.py --report-deleted # list migrated files deleted in Nextcloud
 ./list_albums.py
 ./sync_images.py ~/Pictures
 ```
@@ -276,6 +281,35 @@ Nextcloud stays in Immich. An edited comment is added as new text and the old
 one stays. A file whose content changed is uploaded as a new asset next to the
 old one. A moved file is added to its new folder's album and tag, but is not
 removed from the old ones.
+
+### Files deleted in Nextcloud
+
+Deletions are deliberately not synced: if you clean up or shut down Nextcloud
+after the migration, your photos must stay in Immich. To see what was deleted,
+run:
+
+```sh
+./migrate_nextcloud.py --report-deleted          # configured folder
+./migrate_nextcloud.py --report-deleted "Photos/2019"
+```
+
+It lists every migrated file that is no longer in the Nextcloud folder, with a
+link to its Immich asset and whether that is still in Immich, in the trash or
+already deleted. Decide yourself what to delete in Immich. The report only
+reads; it changes nothing in Nextcloud or Immich.
+
+```
+DELETED   /Photos/2019/IMG_0815.jpg
+          in Immich: https://immich.example.com/photos/3496db51-...
+KEPT      /Photos/Kopie/IMG_0001.jpg
+          same photo still in Nextcloud: /Photos/2019/IMG_0001.jpg
+```
+
+- Files moved within the folder are not reported: Nextcloud keeps their file
+  ID. Files moved out of the folder look deleted.
+- `KEPT`: the file is gone, but the same photo (one Immich asset) is still
+  in Nextcloud in another folder, so the asset is still needed.
+- With a subfolder, other copies outside it are listed as "not checked".
 
 **Size limits:** Nextcloud limits a single comment to 1000 characters, but a
 file can have any number of comments. Immich stores descriptions without a
