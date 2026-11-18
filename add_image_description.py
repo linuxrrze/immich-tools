@@ -1,57 +1,56 @@
 #!/usr/bin/env python3
 # s. https://immich.app/docs/guides/python-file-upload
 
-import requests
 import os
 import io
 import sys
 import base64
 import binascii
-import ollama
 from datetime import datetime
 from PIL import Image
 from pillow_heif import register_heif_opener
 from hashlib import sha1
+from openai import OpenAI
 
 from immich_client import config, add_description, list_albums, list_images, download_image, is_library_asset
 
 register_heif_opener()
 
-### OLLAMA CONFIG
+### LLM CONFIG
+# Any OpenAI-compatible API: Ollama (http://host:11434/v1), OpenAI, vLLM,
+# LM Studio, llama.cpp server, ...
 
-ollama_host = config['ollama']['host']
-default_prompt = config['ollama']['prompt']
+llm_config = config['llm']
+base_url = llm_config['base_url']
+# Ollama ignores the API key, but the client requires one
+api_key = llm_config.get('api_key', 'none')
+model = llm_config['model']
+default_prompt = llm_config['prompt']
 
-### OLLAMA FUNCTIONS
+client = OpenAI(base_url=base_url, api_key=api_key)
 
-def get_available_models(ollama_host):
-    response = requests.get(f'{ollama_host}/api/tags')
-    if response.status_code == 200:
-        # Parse the JSON response
-        data = response.json()
-        # Extract the list of model names
-        model_names = [model['name'] for model in data['models']]
-        # Print the list of model names
-        return(model_names)
-    else:
-        return(None)
+### LLM FUNCTIONS
+
+def get_available_models():
+    try:
+        return [m.id for m in client.models.list()]
+    except Exception:
+        return None
 
 def get_streaming_response(encoded_image_list, model, prompt):
-    client = ollama.Client(host=ollama_host)
-    stream = client.chat(
+    content = [{"type": "text", "text": prompt}] + [
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image}"}}
+        for image in encoded_image_list
+    ]
+    stream = client.chat.completions.create(
         model=model,
-        messages=[
-            {
-                "role": "user",
-                "content": prompt,
-                "images": encoded_image_list,
-            }
-        ],
+        messages=[{"role": "user", "content": content}],
         stream=True,
     )
-
     for chunk in stream:
-        yield chunk["message"]["content"]
+        # Some chunks carry no text (e.g. role or usage information)
+        if chunk.choices and chunk.choices[0].delta.content:
+            yield chunk.choices[0].delta.content
 
 def generate_response(encoded_image_string, model, prompt):
     response = get_streaming_response(encoded_image_string, model, prompt)
@@ -64,13 +63,13 @@ def generate_response(encoded_image_string, model, prompt):
 
 ### MAIN
 
-models = get_available_models(ollama_host)
-print(models)
+print(f"Model: {model} at {base_url}")
+models = get_available_models()
+print(f"Available models: {models}")
 
-model = "gemma3:27b"
-# qwen3 via ollama currently not working:
-# s. https://github.com/langgenius/dify/issues/23010
-#model = "qwen3:32b"
+# Model names of some servers contain '/' (e.g. Qwen/Qwen2.5-VL-7B-Instruct).
+# Ollama names like gemma3:27b are kept as they are.
+cache_model_name = model.replace('/', '_')
 
 os.makedirs("cache", exist_ok=True)
 
@@ -95,7 +94,7 @@ for album in albums:
             desc = ''
             # Existing EXIF description (may be missing or None); passed to the model as extra context
             exif_desc = ((asset.get('exifInfo') or {}).get('description') or '').strip()
-            desc_filename = f"cache/{immich_sha1_csum}-{model}.description"
+            desc_filename = f"cache/{immich_sha1_csum}-{cache_model_name}.description"
 
             # Description created and cached
             if os.path.isfile(desc_filename):

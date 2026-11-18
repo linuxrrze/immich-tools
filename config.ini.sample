@@ -2,6 +2,10 @@
 apiurl = https://immich.local/api
 apikey = YOUR_IMMICH_API_KEY
 
-[ollama]
-host = http://10.10.0.10:11434
+[llm]
+# Any OpenAI-compatible API, e.g. Ollama: http://<host>:11434/v1
+base_url = http://10.10.0.10:11434/v1
+# Ollama ignores the key; set a real key for OpenAI or other hosted APIs
+api_key = ollama
+model = gemma3:27b
 prompt = Describe the image in English. Do not use any introductory words.

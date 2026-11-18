@@ -4,7 +4,7 @@ Small Python tools for an [Immich](https://immich.app/) photo server:
 
 | Script | What it does |
 |---|---|
-| `add_image_description.py` | Generates a description for every image in your albums with a local [Ollama](https://ollama.com/) vision model and stores it as the Immich asset description. |
+| `add_image_description.py` | Generates a description for every image in your albums with a vision model behind any OpenAI-compatible API (e.g. a local [Ollama](https://ollama.com/)) and stores it as the Immich asset description. |
 | `sync_images.py` | Checks which images in a local folder are already in Immich (accepted = new, rejected = duplicate). It does not upload anything yet. |
 | `list_albums.py` | Lists all albums with their IDs. |
 
@@ -19,20 +19,34 @@ Copy `config.ini.sample` to `config.ini` and fill in your values:
 apiurl = https://immich.example.com/api
 apikey = YOUR_IMMICH_API_KEY
 
-[ollama]
-host = http://ollama.example.com:11434
+[llm]
+base_url = http://ollama.example.com:11434/v1
+api_key = ollama
+model = gemma3:27b
 prompt = Describe the image in English. Do not use any introductory words.
 ```
 
-- **API key:** create one in Immich under *Account Settings → API Keys*.
+- **Immich API key:** create one in Immich under *Account Settings → API Keys*.
   `add_image_description.py` needs permission to read albums, search and
   download assets, and update assets.
+- **LLM server (`[llm]`):** any server with an OpenAI-compatible chat API and
+  a vision model works:
+
+  | Server | `base_url` | `api_key` |
+  |---|---|---|
+  | [Ollama](https://ollama.com/) | `http://<host>:11434/v1` | any value |
+  | OpenAI | `https://api.openai.com/v1` | your OpenAI key |
+  | vLLM, LM Studio, llama.cpp server | the server's `/v1` URL | as configured |
+
+- **Model:** the model name as the server knows it. For Ollama, pull it first
+  with `ollama pull gemma3:27b`. The available models are printed at start.
 - **Prompt:** the sample prompt asks for an English description. Change it to
   get descriptions in another language or style.
-- **Model:** `gemma3:27b` (set in `add_image_description.py`). Pull it first
-  with `ollama pull gemma3:27b`.
 
-`config.ini` holds your API key and is excluded from git.
+Ollama's OpenAI API can't set the context size per request. If you need a
+larger one, set `OLLAMA_CONTEXT_LENGTH` on the Ollama server.
+
+`config.ini` holds your API keys and is excluded from git.
 
 ## Usage with Docker
 
@@ -90,7 +104,7 @@ For each image in an album, `add_image_description.py`:
 
 1. downloads the original file and checks it against the checksum Immich has
    stored (files from external libraries are checked by path),
-2. sends it to the Ollama model together with the prompt, the album and file
+2. sends it to the model together with the prompt, the album and file
    name, and any description the image already has,
 3. writes the result to Immich and to `cache/<sha1>-<model>.description`.
 
