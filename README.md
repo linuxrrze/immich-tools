@@ -212,7 +212,12 @@ run or to pick up new files and comments. Progress is stored in
   text that is already in the description is not added twice.
 - A file that was interrupted mid-transfer is downloaded again, but not
   uploaded twice (Immich recognizes the checksum).
-- Albums and tags are completed on the next run if a run was aborted.
+- Albums and tags are created as soon as a folder is done, and completed on
+  the next run if a run was aborted.
+- To stop a run, press Ctrl+C (or `docker stop` the container). The files
+  finished so far in the current folder are still added to its album and
+  tag; press Ctrl+C a second time to skip that. The run then exits with
+  code 130.
 - If a migrated asset was deleted permanently in Immich (trash emptied), it
   is uploaded again. Assets that are only in the trash are left there.
 - Only one run at a time is possible; a second one exits with an error

@@ -8,7 +8,7 @@ For every image/video below the Nextcloud folder:
      the Immich description, in front of any existing text (e.g. an AI
      description). Text already present is not added again.
 
-At the end, the Nextcloud folder structure is recreated in Immich:
+As soon as a folder is done, its structure is recreated in Immich:
   - one album per folder, named after the full folder path
     (e.g. 'Photos/2019/Rome'),
   - nested tags below 'Nextcloud' (e.g. 'Nextcloud/Photos/2019/Rome').
@@ -25,6 +25,7 @@ Usage: migrate_nextcloud.py [folder]   (default: [nextcloud] folder / NEXTCLOUD_
 
 import json
 import os
+import signal
 import sys
 import tempfile
 
@@ -106,29 +107,36 @@ def migrate_comments(item, asset_id):
     return len(comments)
 
 
-def organize(folders):
-    """Put assets into one album and one nested tag per Nextcloud folder.
+_albums = None  # album name -> id, loaded once per run
 
-    `folders` maps folder path (e.g. 'Photos/2019') to a set of asset IDs.
-    """
-    folders = {f: ids for f, ids in folders.items() if f and ids}
-    if not folders:
+
+def organize(folder, asset_ids):
+    """Put the assets of one Nextcloud folder (e.g. 'Photos/2019') into an
+    album and a nested tag of the same name."""
+    global _albums
+    if not folder or not asset_ids:
         return
-    albums = {}
-    for album in immich.list_albums():
-        albums.setdefault(album['albumName'], album['id'])
-    tags = immich.upsert_tags(f'{TAG_ROOT}/{f}' for f in folders)
+    if _albums is None:
+        _albums = {}
+        for album in immich.list_albums():
+            _albums.setdefault(album['albumName'], album['id'])
+    if folder not in _albums:
+        _albums[folder] = immich.create_album(folder)['id']
+        print(f"ALBUM     {folder} (created)")
+    tag = f'{TAG_ROOT}/{folder}'
+    immich.add_to_album(_albums[folder], asset_ids)
+    immich.tag_assets(immich.upsert_tags([tag])[tag], asset_ids)
+    print(f"FOLDER    {folder}: {len(asset_ids)} asset(s) in album and tag")
 
-    for folder, asset_ids in sorted(folders.items()):
-        if folder not in albums:
-            albums[folder] = immich.create_album(folder)['id']
-            print(f"ALBUM     {folder} (created)")
-        immich.add_to_album(albums[folder], asset_ids)
-        immich.tag_assets(tags[f'{TAG_ROOT}/{folder}'], asset_ids)
-        print(f"FOLDER    {folder}: {len(asset_ids)} asset(s) in album and tag")
+
+def _terminate(signum, frame):
+    raise KeyboardInterrupt
 
 
 def main():
+    # Treat SIGTERM (docker stop, docker compose down) like Ctrl+C. Without a
+    # handler, Python running as PID 1 in a container would ignore it.
+    signal.signal(signal.SIGTERM, _terminate)
     folder = sys.argv[1] if len(sys.argv) > 1 else immich.setting('nextcloud', 'folder', '')
     os.makedirs('cache', exist_ok=True)
     lock = acquire_lock()
@@ -137,44 +145,70 @@ def main():
         return 2
     state = load_state()
     stats = {'uploaded': 0, 'existing': 0, 'unchanged': 0, 'skipped': 0, 'failed': 0, 'comments': 0}
-    folders = {}
+    # list_media() returns the files folder by folder, so a folder is
+    # complete when the first file of another one arrives. Its album and
+    # tag are created right then, not only at the end of the run.
+    current_folder, current_ids = None, set()
 
-    for item in nextcloud.list_media(folder):
-        known = state.get(item['fileid'])
+    def finish_folder():
         try:
-            if known and known['etag'] == item['etag'] and immich.asset_exists(known['asset_id']):
-                asset_id, status = known['asset_id'], 'unchanged'
-            else:
-                if known and known['etag'] == item['etag']:
-                    print(f"GONE      {item['path']}: asset {known['asset_id']} was deleted in Immich, uploading again")
-                asset_id, status = transfer(item)
-                if asset_id is None:
-                    print(f"SKIP {item['path']}: {status}")
-                    stats['skipped'] += 1
-                    continue
-                state[item['fileid']] = {'etag': item['etag'], 'asset_id': asset_id, 'path': item['path']}
-                save_state(state)
-            folders.setdefault(os.path.dirname(item['path']).strip('/'), set()).add(asset_id)
-
-            line = f"{status.upper():9} {item['path']}"
-            added = migrate_comments(item, asset_id) if item['comments_count'] else 0
-            if added:
-                line += f" (+{added} comment(s))"
-                stats['comments'] += 1
-            print(line)
-            stats['uploaded' if status == 'created' else
-                  'unchanged' if status == 'unchanged' else 'existing'] += 1
+            organize(current_folder, current_ids)
         except Exception as e:
-            print(f"ERROR {item['path']}: {e}")
+            print(f"ERROR creating album/tag for {current_folder}: {e}")
             stats['failed'] += 1
 
+    interrupted = False
     try:
-        organize(folders)
-    except Exception as e:
-        print(f"ERROR creating albums/tags: {e}")
-        stats['failed'] += 1
+        for item in nextcloud.list_media(folder):
+            item_folder = os.path.dirname(item['path']).strip('/')
+            if item_folder != current_folder:
+                finish_folder()
+                current_folder, current_ids = item_folder, set()
+            known = state.get(item['fileid'])
+            try:
+                if known and known['etag'] == item['etag'] and immich.asset_exists(known['asset_id']):
+                    asset_id, status = known['asset_id'], 'unchanged'
+                else:
+                    if known and known['etag'] == item['etag']:
+                        print(f"GONE      {item['path']}: asset {known['asset_id']} was deleted in Immich, uploading again")
+                    asset_id, status = transfer(item)
+                    if asset_id is None:
+                        print(f"SKIP {item['path']}: {status}")
+                        stats['skipped'] += 1
+                        continue
+                    state[item['fileid']] = {'etag': item['etag'], 'asset_id': asset_id, 'path': item['path']}
+                    save_state(state)
+                current_ids.add(asset_id)
+
+                line = f"{status.upper():9} {item['path']}"
+                added = migrate_comments(item, asset_id) if item['comments_count'] else 0
+                if added:
+                    line += f" (+{added} comment(s))"
+                    stats['comments'] += 1
+                print(line)
+                stats['uploaded' if status == 'created' else
+                      'unchanged' if status == 'unchanged' else 'existing'] += 1
+            except Exception as e:
+                print(f"ERROR {item['path']}: {e}")
+                stats['failed'] += 1
+    except KeyboardInterrupt:
+        # Ctrl+C or SIGTERM (docker stop). Every finished file is already
+        # in the state file; the file in progress is redone next time.
+        interrupted = True
+        print('\nInterrupted. Progress is saved; run the tool again to continue.')
+        if current_folder and current_ids:
+            print('Adding the finished files to their album and tag '
+                  '(press Ctrl+C again to skip this) ...')
+
+    try:
+        finish_folder()
+    except KeyboardInterrupt:
+        interrupted = True
+        print('\nSkipped; the album and tag are completed on the next run.')
 
     print('\nSummary: ' + ', '.join(f'{k}: {v}' for k, v in stats.items()))
+    if interrupted:
+        return 130  # conventional exit code for SIGINT
     return 1 if stats['failed'] else 0
 
 
