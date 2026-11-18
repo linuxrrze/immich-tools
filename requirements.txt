@@ -1,4 +1,4 @@
-requests
-pillow
-pillow_heif
-openai
+requests==2.34.2
+pillow==13.0.0
+pillow_heif==1.8.1
+openai==3.55.1

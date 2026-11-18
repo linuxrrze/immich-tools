@@ -130,5 +130,14 @@ on every push and pull request to `main`, on `v*` tags and once a week:
 Image tags: `latest` (main branch), `1.2.3` and `1.2` (for a tag `v1.2.3`) and
 `sha-<commit>`.
 
-The weekly build picks up security fixes in the base image and dependencies
-without any code change.
+### Keeping dependencies up to date
+
+Python packages (`requirements.txt`), the base image (pinned by digest) and
+the GitHub Actions (pinned by commit SHA) all have fixed versions, so builds
+are reproducible. [Dependabot](.github/dependabot.yml) checks them weekly and
+opens pull requests for updates; the pipeline builds and scans each of them
+before anything is merged. Python minor upgrades (e.g. 3.13 → 3.14) are not
+proposed automatically.
+
+The weekly pipeline run additionally installs the latest Debian security
+updates into the image.
