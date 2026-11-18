@@ -13,7 +13,7 @@ from urllib.parse import quote, unquote, urljoin, urlparse
 
 import requests
 
-from immich_client import config
+from immich_client import setting
 
 NS = {'d': 'DAV:', 'oc': 'http://owncloud.org/ns'}
 
@@ -21,9 +21,9 @@ NS = {'d': 'DAV:', 'oc': 'http://owncloud.org/ns'}
 # (s. apps/dav/lib/Comments/CommentsPlugin.php)
 COMMENTS_PAGE_SIZE = 100
 
-nextcloud_url = config['nextcloud']['url'].rstrip('/')
-nextcloud_user = config['nextcloud']['user']
-nextcloud_password = config['nextcloud']['password']
+nextcloud_url = setting('nextcloud', 'url').rstrip('/')
+nextcloud_user = setting('nextcloud', 'user')
+nextcloud_password = setting('nextcloud', 'password')
 
 _session = requests.Session()
 _session.auth = (nextcloud_user, nextcloud_password)

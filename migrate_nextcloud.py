@@ -20,7 +20,7 @@ still checked and added if new ones exist. If a migrated asset was deleted
 permanently in Immich, it is uploaded again. A lock file prevents two runs
 at the same time.
 
-Usage: migrate_nextcloud.py [folder]   (default: [nextcloud] folder in config.ini)
+Usage: migrate_nextcloud.py [folder]   (default: [nextcloud] folder / NEXTCLOUD_FOLDER)
 """
 
 import json
@@ -129,7 +129,7 @@ def organize(folders):
 
 
 def main():
-    folder = sys.argv[1] if len(sys.argv) > 1 else immich.config['nextcloud'].get('folder', '')
+    folder = sys.argv[1] if len(sys.argv) > 1 else immich.setting('nextcloud', 'folder', '')
     os.makedirs('cache', exist_ok=True)
     lock = acquire_lock()
     if lock is None:

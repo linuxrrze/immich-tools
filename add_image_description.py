@@ -12,7 +12,7 @@ from pillow_heif import register_heif_opener
 from hashlib import sha1
 from openai import OpenAI
 
-from immich_client import config, add_description, merge_description, list_albums, list_images, download_image, is_library_asset
+from immich_client import setting, add_description, merge_description, list_albums, list_images, download_image, is_library_asset
 
 register_heif_opener()
 
@@ -20,12 +20,11 @@ register_heif_opener()
 # Any OpenAI-compatible API: Ollama (http://host:11434/v1), OpenAI, vLLM,
 # LM Studio, llama.cpp server, ...
 
-llm_config = config['llm']
-base_url = llm_config['base_url']
+base_url = setting('llm', 'base_url')
 # Ollama ignores the API key, but the client requires one
-api_key = llm_config.get('api_key', 'none')
-model = llm_config['model']
-default_prompt = llm_config['prompt']
+api_key = setting('llm', 'api_key', 'none')
+model = setting('llm', 'model')
+default_prompt = setting('llm', 'prompt')
 
 client = OpenAI(base_url=base_url, api_key=api_key)
 

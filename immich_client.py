@@ -5,17 +5,44 @@ Checked against the Immich OpenAPI spec of v2.0.0 and v3.4.1
 """
 
 import os
+import sys
 import configparser
 from datetime import datetime, timezone
 from hashlib import sha1
 
 import requests
 
-config = configparser.ConfigParser()
-config.read('config.ini')
+# Settings come from config.ini (optional) and from environment variables
+# named <SECTION>_<KEY>, e.g. IMMICH_APIKEY or NEXTCLOUD_PASSWORD; the
+# environment wins. No interpolation, so passwords may contain '%'.
+CONFIG_SECTIONS = ('immich', 'llm', 'nextcloud')
 
-immich_apiurl = config['immich']['apiurl']
-immich_apikey = config['immich']['apikey']
+config = configparser.ConfigParser(interpolation=None)
+config.read('config.ini')
+for _section in CONFIG_SECTIONS:
+    _prefix = _section.upper() + '_'
+    for _name, _value in os.environ.items():
+        if _name.startswith(_prefix) and len(_name) > len(_prefix):
+            if not config.has_section(_section):
+                config.add_section(_section)
+            config[_section][_name[len(_prefix):].lower()] = _value
+
+_REQUIRED = object()
+
+
+def setting(section, key, default=_REQUIRED):
+    """A setting from config.ini or the environment; exits with a clear
+    message if a required one is missing."""
+    if config.has_option(section, key):
+        return config.get(section, key)
+    if default is not _REQUIRED:
+        return default
+    sys.exit(f'Missing setting: {key} in section [{section}] of config.ini, '
+             f'or environment variable {section.upper()}_{key.upper()}')
+
+
+immich_apiurl = setting('immich', 'apiurl')
+immich_apikey = setting('immich', 'apikey')
 
 # Page size for /search/metadata (server maximum is 1000)
 SEARCH_PAGE_SIZE = 1000

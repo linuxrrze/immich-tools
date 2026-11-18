@@ -1,3 +1,5 @@
 config.ini
 cache/
 __pycache__/
+.env
+*.swp

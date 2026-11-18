@@ -13,7 +13,9 @@ Works with Immich **v2** and **v3** (checked against the v3.4.1 API).
 
 ## Configuration
 
-Copy `config.ini.sample` to `config.ini` and fill in your values:
+The settings can be stored in a `config.ini` file, in environment variables
+(e.g. a `.env` file for Docker, see below) or both. For a file, copy
+`config.ini.sample` to `config.ini` and fill in your values:
 
 ```ini
 [immich]
@@ -36,10 +38,9 @@ folder = Photos
 Each tool only needs the sections it uses: `[llm]` is for
 `add_image_description.py`, `[nextcloud]` for `migrate_nextcloud.py`.
 
-- **Immich API key:** create one in Immich under *Account Settings → API Keys*.
-  `add_image_description.py` needs permission to read albums, search and
-  download assets, and update assets. `migrate_nextcloud.py` needs to upload,
-  read and update assets, and to create and edit albums and tags.
+- **Immich API key:** create one in Immich under *Account Settings → API
+  Keys*. Instead of `all`, you can select only the permissions the tools
+  need (see [API key permissions](#api-key-permissions)).
 - **Nextcloud (`[nextcloud]`):** use an app password (*Personal settings →
   Security → Create new app password*), not your login password. `folder` is
   relative to your Nextcloud root; leave it empty to migrate everything.
@@ -60,7 +61,33 @@ Each tool only needs the sections it uses: `[llm]` is for
 Ollama's OpenAI API can't set the context size per request. If you need a
 larger one, set `OLLAMA_CONTEXT_LENGTH` on the Ollama server.
 
-`config.ini` holds your API keys and is excluded from git.
+**Environment variables:** every setting can also be set as
+`<SECTION>_<KEY>`, e.g. `IMMICH_APIURL`, `IMMICH_APIKEY`, `LLM_MODEL`,
+`NEXTCLOUD_PASSWORD` or `NEXTCLOUD_FOLDER`. They override `config.ini`, which
+is then optional. [`.env.sample`](.env.sample) lists all of them.
+
+`config.ini` and `.env` hold your API keys and are excluded from git.
+
+### API key permissions
+
+The permissions each tool needs (checked against the Immich v2.0.0 and v3.4.1
+API). `GET /server/version` needs none.
+
+| Permission | Used for | `add_image_description` | `migrate_nextcloud` | `sync_images` | `list_albums` |
+|---|---|:-:|:-:|:-:|:-:|
+| `album.read` | list albums (`GET /albums`) | ✓ | ✓ | | ✓ |
+| `album.create` | create the folder albums (`POST /albums`) | | ✓ | | |
+| `albumAsset.create` | add assets to albums (`PUT /albums/{id}/assets`) | | ✓ | | |
+| `asset.read` | album contents (`POST /search/metadata`), read the description (`GET /assets/{id}`) | ✓ | ✓ | | |
+| `asset.download` | download the original (`GET /assets/{id}/original`) | ✓ | | | |
+| `asset.update` | write the description (`PATCH`/`PUT /assets/{id}`); also needed to tag assets | ✓ | ✓ | | |
+| `asset.upload` | duplicate check (`POST /assets/bulk-upload-check`), upload (`POST /assets`) | | ✓ | ✓ | |
+| `tag.create` | create or reuse the folder tags (`PUT /tags`) | | ✓ | | |
+| `tag.asset` | tag assets (`PUT /tags/assets`) | | ✓ | | |
+
+One key for everything therefore needs all nine permissions. A key for
+`add_image_description.py` alone needs only `album.read`, `asset.read`,
+`asset.download` and `asset.update`.
 
 ## Usage with Docker
 
@@ -71,32 +98,56 @@ The image is published to the GitHub Container Registry for `linux/amd64` and
 docker pull ghcr.io/linuxrrze/immich-tools:latest
 ```
 
-The tools read `config.ini` from, and write their cache to, `/data` in the
-container. Mount a folder that contains your `config.ini`:
+Pass the settings with an env file. Copy `.env.sample` to `.env` and fill in
+your values. Write them without quotes, because `docker run --env-file` keeps
+quotes as part of the value.
+
+The tools write their cache and the migration progress to `/data` in the
+container. Mount a folder there so this survives the container:
 
 ```sh
-mkdir -p immich-tools && cp config.ini immich-tools/
+mkdir -p immich-tools
 
 # Describe all images in all albums (default command)
-docker run --rm -v "$PWD/immich-tools:/data" ghcr.io/linuxrrze/immich-tools
+docker run --rm --env-file .env -v "$PWD/immich-tools:/data" ghcr.io/linuxrrze/immich-tools
 
 # Only one album
-docker run --rm -v "$PWD/immich-tools:/data" ghcr.io/linuxrrze/immich-tools \
+docker run --rm --env-file .env -v "$PWD/immich-tools:/data" ghcr.io/linuxrrze/immich-tools \
   add_image_description.py "My Album"
 
-# Migrate the Nextcloud folder from config.ini (or pass another folder)
-docker run --rm -v "$PWD/immich-tools:/data" ghcr.io/linuxrrze/immich-tools migrate_nextcloud.py
+# Migrate the Nextcloud folder from NEXTCLOUD_FOLDER (or pass another folder)
+docker run --rm --env-file .env -v "$PWD/immich-tools:/data" ghcr.io/linuxrrze/immich-tools \
+  migrate_nextcloud.py
 
 # List albums
-docker run --rm -v "$PWD/immich-tools:/data" ghcr.io/linuxrrze/immich-tools list_albums.py
+docker run --rm --env-file .env -v "$PWD/immich-tools:/data" ghcr.io/linuxrrze/immich-tools \
+  list_albums.py
 
 # Check which local photos are already in Immich
-docker run --rm -v "$PWD/immich-tools:/data" -v "$HOME/Pictures:/photos:ro" \
+docker run --rm --env-file .env -v "$PWD/immich-tools:/data" -v "$HOME/Pictures:/photos:ro" \
   ghcr.io/linuxrrze/immich-tools sync_images.py /photos
 ```
 
+With Docker Compose:
+
+```yaml
+services:
+  immich-tools:
+    image: ghcr.io/linuxrrze/immich-tools:latest
+    env_file: .env
+    volumes:
+      - ./immich-tools:/data
+```
+
+```sh
+docker compose run --rm immich-tools migrate_nextcloud.py
+```
+
+A `config.ini` in the mounted folder works as well; settings in the
+environment override it.
+
 The container runs as user ID 1000. The mounted folder must be writable for
-that user, because the description cache is stored in `cache/` inside it.
+that user.
 
 ## Usage without Docker
 
