@@ -1,0 +1,4 @@
+requests
+pillow
+pillow_heif
+ollama
