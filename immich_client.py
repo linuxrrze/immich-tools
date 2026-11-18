@@ -90,6 +90,19 @@ def get_asset(asset_id):
     return _get(f'/assets/{asset_id}').json()
 
 
+def asset_exists(asset_id):
+    """False if the asset was deleted permanently (trashed assets still exist).
+
+    Immich answers 400 "Not found or no asset.read access" for unknown IDs
+    (s. server/src/utils/access.ts); 404 is accepted as well.
+    """
+    response = requests.get(f'{immich_apiurl}/assets/{asset_id}', headers=_headers())
+    if response.status_code in (400, 404):
+        return False
+    response.raise_for_status()
+    return True
+
+
 def merge_description(current, addition, prepend=False):
     """Combine an existing description with new text without losing either.
 

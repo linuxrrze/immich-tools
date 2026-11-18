@@ -16,7 +16,9 @@ Both are reused on later runs; assets are never added twice.
 
 Progress is stored in cache/nextcloud-migration.json, so files that did not
 change are not downloaded again when the tool is re-run; their comments are
-still checked and added if new ones exist.
+still checked and added if new ones exist. If a migrated asset was deleted
+permanently in Immich, it is uploaded again. A lock file prevents two runs
+at the same time.
 
 Usage: migrate_nextcloud.py [folder]   (default: [nextcloud] folder in config.ini)
 """
@@ -30,9 +32,28 @@ import immich_client as immich
 import nextcloud_client as nextcloud
 
 STATE_FILE = 'cache/nextcloud-migration.json'
+LOCK_FILE = 'cache/nextcloud-migration.lock'
 
 # Root of the tag tree that mirrors the Nextcloud folders
 TAG_ROOT = 'Nextcloud'
+
+
+def acquire_lock():
+    """Hold an exclusive lock for the whole run, so two runs can't write the
+    same state file. The OS releases it when the process ends, even after a
+    crash. Returns the open lock file, or None if another run holds it."""
+    lock = open(LOCK_FILE, 'a')
+    try:
+        if os.name == 'nt':
+            import msvcrt
+            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        lock.close()
+        return None
+    return lock
 
 
 def load_state():
@@ -110,6 +131,10 @@ def organize(folders):
 def main():
     folder = sys.argv[1] if len(sys.argv) > 1 else immich.config['nextcloud'].get('folder', '')
     os.makedirs('cache', exist_ok=True)
+    lock = acquire_lock()
+    if lock is None:
+        print(f"Another migration is already running (lock: {LOCK_FILE}).", file=sys.stderr)
+        return 2
     state = load_state()
     stats = {'uploaded': 0, 'existing': 0, 'unchanged': 0, 'skipped': 0, 'failed': 0, 'comments': 0}
     folders = {}
@@ -117,9 +142,11 @@ def main():
     for item in nextcloud.list_media(folder):
         known = state.get(item['fileid'])
         try:
-            if known and known['etag'] == item['etag']:
+            if known and known['etag'] == item['etag'] and immich.asset_exists(known['asset_id']):
                 asset_id, status = known['asset_id'], 'unchanged'
             else:
+                if known and known['etag'] == item['etag']:
+                    print(f"GONE      {item['path']}: asset {known['asset_id']} was deleted in Immich, uploading again")
                 asset_id, status = transfer(item)
                 if asset_id is None:
                     print(f"SKIP {item['path']}: {status}")

@@ -147,11 +147,31 @@ recreated in two ways:
 - **Tags:** nested tags below `Nextcloud`, e.g. `Nextcloud` → `Photos` →
   `2019` → `Rome`. They show the complete tree and can be used as filters.
 
-Progress is stored in `cache/nextcloud-migration.json`. When the tool runs
-again, unchanged files are not downloaded again, but their comments are
-checked; text that is already in the description is not added twice. If a
-comment is edited in Nextcloud after the migration, the edited version is
-added and the old one stays.
+A file that exists in several Nextcloud folders (same content) becomes a
+single Immich asset. It is added to the album and tag of every folder, and
+the comments of all copies are added to its description.
+
+### Running it again
+
+The tool can be run any number of times, e.g. to continue an interrupted
+run or to pick up new files and comments. Progress is stored in
+`cache/nextcloud-migration.json` after every file:
+
+- Unchanged files are not downloaded again, but their comments are checked;
+  text that is already in the description is not added twice.
+- A file that was interrupted mid-transfer is downloaded again, but not
+  uploaded twice (Immich recognizes the checksum).
+- Albums and tags are completed on the next run if a run was aborted.
+- If a migrated asset was deleted permanently in Immich (trash emptied), it
+  is uploaded again. Assets that are only in the trash are left there.
+- Only one run at a time is possible; a second one exits with an error
+  while `cache/nextcloud-migration.lock` is held.
+
+The migration only adds things to Immich. A file or comment deleted in
+Nextcloud stays in Immich. An edited comment is added as new text and the old
+one stays. A file whose content changed is uploaded as a new asset next to the
+old one. A moved file is added to its new folder's album and tag, but is not
+removed from the old ones.
 
 **Size limits:** Nextcloud limits a single comment to 1000 characters, but a
 file can have any number of comments. Immich stores descriptions without a
