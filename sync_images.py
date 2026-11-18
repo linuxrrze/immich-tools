@@ -2,6 +2,7 @@
 # s. https://immich.app/docs/guides/python-file-upload
 
 import os
+import sys
 
 from immich_client import bulk_upload_check, upload_file
 
@@ -37,8 +38,12 @@ def check_batch(file_list):
     print(f"Accepted: {accepted} / Rejected: {rejected}")
 
 
+if len(sys.argv) != 2:
+    print(f"Usage: {sys.argv[0]} <photo directory>")
+    sys.exit(1)
+
 file_list = []
-for root, dirs, files in os.walk("/home/marcel/Nextcloud/"):
+for root, dirs, files in os.walk(sys.argv[1]):
     print(f"{root}")
     for file in files:
         if file.lower().endswith((".jpg", ".jpeg", ".png", ".bmp", ".gif", ".heic", ".webp")):
