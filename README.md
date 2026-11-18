@@ -33,6 +33,8 @@ url = https://nextcloud.example.com
 user = YOUR_NEXTCLOUD_USER
 password = YOUR_NEXTCLOUD_APP_PASSWORD
 folder = Photos
+strip_folder = yes
+restore_trashed = yes
 ```
 
 Each tool only needs the sections it uses: `[llm]` is for
@@ -44,6 +46,8 @@ Each tool only needs the sections it uses: `[llm]` is for
 - **Nextcloud (`[nextcloud]`):** use an app password (*Personal settings →
   Security → Create new app password*), not your login password. `folder` is
   relative to your Nextcloud root; leave it empty to migrate everything.
+  `strip_folder` (default `yes`) removes `folder` from the album and tag names,
+  see [below](#how-the-nextcloud-migration-works).
 - **LLM server (`[llm]`):** any server with an OpenAI-compatible chat API and
   a vision model works:
 
@@ -77,6 +81,7 @@ API). `GET /server/version` needs none.
 |---|---|:-:|:-:|:-:|:-:|
 | `album.read` | list albums (`GET /albums`) | ✓ | ✓ | | ✓ |
 | `album.create` | create the folder albums (`POST /albums`) | | ✓ | | |
+| `album.update` | rename albums once when switching to `strip_folder` (`PATCH /albums/{id}`) | | ✓ | | |
 | `albumAsset.create` | add assets to albums (`PUT /albums/{id}/assets`) | | ✓ | | |
 | `asset.read` | album contents (`POST /search/metadata`), read the description (`GET /assets/{id}`) | ✓ | ✓ | | |
 | `asset.download` | download the original (`GET /assets/{id}/original`) | ✓ | | | |
@@ -84,8 +89,13 @@ API). `GET /server/version` needs none.
 | `asset.upload` | duplicate check (`POST /assets/bulk-upload-check`), upload (`POST /assets`) | | ✓ | ✓ | |
 | `tag.create` | create or reuse the folder tags (`PUT /tags`) | | ✓ | | |
 | `tag.asset` | tag assets (`PUT /tags/assets`) | | ✓ | | |
+| `tag.read` | find old full-path tags once when switching to `strip_folder` (`GET /tags`) | | ✓ | | |
+| `tag.delete` | remove those old tags (`DELETE /tags/{id}`) | | ✓ | | |
+| `asset.delete` | restore migrated photos from the trash (`POST /trash/restore/assets`); Immich requires this permission for restoring | | ✓ | | |
 
-One key for everything therefore needs all nine permissions. A key for
+One key for everything therefore needs all thirteen permissions. `album.update`,
+`tag.read` and `tag.delete` are only used once, when albums and tags from runs
+with full-path names are switched to `strip_folder`. A key for
 `add_image_description.py` alone needs only `album.read`, `asset.read`,
 `asset.download` and `asset.update`.
 
@@ -151,7 +161,7 @@ that user.
 
 ## Usage without Docker
 
-Requires Python 3.10 or newer.
+Requires Python 3.11 or newer.
 
 ```sh
 python3 -m venv .venv
@@ -167,6 +177,22 @@ pip install -r requirements.txt
 ```
 
 Run the scripts from the folder that contains `config.ini`.
+
+## Running the tests
+
+The regression tests run the tools against fake Immich, Nextcloud and LLM
+servers ([`tests/fakes/`](tests/fakes)) on local ports; no real server and no
+`config.ini` are needed (the tests never read it):
+
+```sh
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+They cover the API client (v2 and v3 behaviour), the Nextcloud client, the
+Nextcloud migration (re-runs, duplicates, deleted and trashed assets, album and
+tag names, the lock, Ctrl+C/SIGTERM) and the description tool. A run takes
+about 20 seconds. The tests are not part of the Docker image.
 
 ## How the Nextcloud migration works
 
@@ -191,12 +217,31 @@ file copy loses them. For every image and video below the configured folder,
 Immich has no folders for uploaded files, so the Nextcloud folder structure is
 recreated in two ways:
 
-- **Albums:** one album per folder, named after the full folder path, e.g.
-  `Photos/2019/Rome`. Immich albums can't be nested, so the full path keeps
-  folders with the same name apart. An existing album with exactly that name
-  is reused.
-- **Tags:** nested tags below `Nextcloud`, e.g. `Nextcloud` → `Photos` →
-  `2019` → `Rome`. They show the complete tree and can be used as filters.
+- **Albums:** one album per folder, named after the folder path below the
+  configured `folder`. With `folder = Photos`, `Photos/2019/Rome` becomes the
+  album `2019/Rome`, and files directly in `Photos` go to the album `Photos`.
+  Immich albums can't be nested, so the rest of the path keeps folders with
+  the same name apart. An existing album with exactly that name is reused.
+- **Tags:** nested tags below `Nextcloud`, e.g. `Nextcloud` → `2019` →
+  `Rome`; files directly in `Photos` get the tag `Nextcloud`. They show the
+  complete tree and can be used as filters.
+
+Set `strip_folder = no` to keep the full path in both (album
+`Photos/2019/Rome`, tag `Nextcloud/Photos/2019/Rome`). The configured `folder`
+is stripped even when you pass another folder on the command line, so names
+don't depend on where a run starts. Folders outside it keep their full path.
+A subfolder named like the configured folder itself (e.g. `Photos/Photos`)
+shares the album `Photos` with the files directly in `Photos`; use
+`strip_folder = no` if that matters to you.
+
+**Switching from full-path names:** earlier versions always used the full
+path. The first run with `strip_folder = yes` renames those albums (e.g.
+`Photos/2019/Rome` → `2019/Rome`); their photos stay in them. An album is not
+renamed if one with the new name already exists. Immich can't move tags, so
+the new tags are assigned during the run and the old `Nextcloud/Photos/...`
+tags are deleted after the first complete run of the configured folder
+without errors. This needs the `album.update`, `tag.read` and `tag.delete`
+permissions once.
 
 A file that exists in several Nextcloud folders (same content) becomes a
 single Immich asset. It is added to the album and tag of every folder, and
@@ -218,8 +263,11 @@ run or to pick up new files and comments. Progress is stored in
   finished so far in the current folder are still added to its album and
   tag; press Ctrl+C a second time to skip that. The run then exits with
   code 130.
-- If a migrated asset was deleted permanently in Immich (trash emptied), it
-  is uploaded again. Assets that are only in the trash are left there.
+- If a migrated photo was deleted permanently in Immich (trash emptied), it
+  is uploaded again. If it is in the Immich trash, it is restored: Immich
+  hides trashed photos in albums and rejects uploading them again as
+  duplicates. Set `restore_trashed = no` to leave trashed photos in the
+  trash instead; they are then skipped and not added to albums or tags.
 - Only one run at a time is possible; a second one exits with an error
   while `cache/nextcloud-migration.lock` is held.
 
@@ -254,13 +302,15 @@ added if it is missing from the description.
 [`.github/workflows/docker.yml`](.github/workflows/docker.yml) builds the image
 on every push and pull request to `main`, on `v*` tags and once a week:
 
-1. builds the image,
-2. scans it with [Trivy](https://trivy.dev/) for vulnerabilities, secrets and
+1. runs the tests (`test` job, Python 3.11 and 3.13); nothing is built or
+   pushed if they fail,
+2. builds the image,
+3. scans it with [Trivy](https://trivy.dev/) for vulnerabilities, secrets and
    misconfigurations. All findings are uploaded to the repository's
    *Security → Code scanning* tab,
-3. **fails the pipeline** if there is a HIGH or CRITICAL vulnerability that
+4. **fails the pipeline** if there is a HIGH or CRITICAL vulnerability that
    has a fix available,
-4. only then builds for amd64 and arm64 and pushes to `ghcr.io` (not for pull
+5. only then builds for amd64 and arm64 and pushes to `ghcr.io` (not for pull
    requests), with SBOM and provenance attestations.
 
 Image tags: `latest` (main branch), `1.2.3` and `1.2` (for a tag `v1.2.3`) and
@@ -268,7 +318,7 @@ Image tags: `latest` (main branch), `1.2.3` and `1.2` (for a tag `v1.2.3`) and
 
 ### Keeping dependencies up to date
 
-Python packages (`requirements.txt`), the base image (pinned by digest) and
+Python packages (`requirements.txt`, `requirements-dev.txt`), the base image (pinned by digest) and
 the GitHub Actions (pinned by commit SHA) all have fixed versions, so builds
 are reproducible. [Dependabot](.github/dependabot.yml) checks them weekly and
 opens pull requests for updates; the pipeline builds and scans each of them

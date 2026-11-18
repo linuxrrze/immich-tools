@@ -20,7 +20,39 @@ env:
   SCAN_TAG: immich-tools:scan
 
 jobs:
+  # Regression tests against fake Immich, Nextcloud and LLM servers
+  # (tests/fakes); nothing is built or pushed if they fail
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.13: the Dockerfile's version; 3.11: the oldest the pinned
+        # requirements support (pillow 13 needs 3.11+)
+        python-version: ['3.11', '3.13']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: python -m pytest
+
   build-scan-push:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read

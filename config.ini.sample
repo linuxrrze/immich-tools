@@ -18,3 +18,7 @@ user = YOUR_NEXTCLOUD_USER
 password = YOUR_NEXTCLOUD_APP_PASSWORD
 # Folder to migrate, relative to your Nextcloud root (default: everything)
 folder = Photos
+# Album and tag names without the folder above ('Photos/2019' -> '2019'); no = full path
+strip_folder = yes
+# Restore migrated photos that are in the Immich trash; no = skip them
+restore_trashed = yes

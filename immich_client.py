@@ -117,17 +117,26 @@ def get_asset(asset_id):
     return _get(f'/assets/{asset_id}').json()
 
 
-def asset_exists(asset_id):
-    """False if the asset was deleted permanently (trashed assets still exist).
+def asset_status(asset_id):
+    """'active', 'trashed' (in the Immich trash) or None (deleted permanently).
 
     Immich answers 400 "Not found or no asset.read access" for unknown IDs
     (s. server/src/utils/access.ts); 404 is accepted as well.
     """
     response = requests.get(f'{immich_apiurl}/assets/{asset_id}', headers=_headers())
     if response.status_code in (400, 404):
-        return False
+        return None
     response.raise_for_status()
-    return True
+    return 'trashed' if response.json().get('isTrashed') else 'active'
+
+
+def restore_assets(asset_ids):
+    """Restore assets from the trash (needs the asset.delete permission).
+    A trashed file can't be uploaded again: Immich reports it as duplicate."""
+    for chunk in _chunks(list(asset_ids)):
+        response = requests.post(f'{immich_apiurl}/trash/restore/assets', headers=_headers(),
+                                 json={'ids': chunk})
+        response.raise_for_status()
 
 
 def merge_description(current, addition, prepend=False):
@@ -151,6 +160,27 @@ def list_albums():
 
 def create_album(name):
     return _post('/albums', json={'albumName': name})
+
+
+def rename_album(album_id, name):
+    response = requests.patch(f'{immich_apiurl}/albums/{album_id}', headers=_headers(),
+                              json={'albumName': name})
+    response.raise_for_status()
+    return response.json()
+
+
+def list_tags():
+    """All tags of the user; `value` is the full path, e.g. 'Nextcloud/2019'."""
+    return _get('/tags').json()
+
+
+def delete_tag(tag_id):
+    """Delete a tag (assets keep everything else). A tag that is already gone
+    (e.g. removed together with its parent) is not an error."""
+    response = requests.delete(f'{immich_apiurl}/tags/{tag_id}', headers=_headers())
+    if response.status_code in (400, 404):
+        return
+    response.raise_for_status()
 
 
 def add_to_album(album_id, asset_ids):
